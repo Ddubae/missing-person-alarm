@@ -187,7 +187,6 @@ if not recent_df.empty:
     recent_df["mag_val"] = pd.to_numeric(recent_df["mt"], errors="coerce")
     recent_df["color"] = recent_df["mag_val"].apply(mag_color)
     recent_df["radius"] = recent_df["mag_val"].fillna(2) * 2500 + 3000
-    # pydeck 직렬화 안전을 위해 지도용 컬럼만 남기고 문자열/숫자 타입 정리
     map_recent_df = recent_df[["lat", "lon", "loc", "mt", "inT", "color", "radius"]].copy()
     map_recent_df["lat"] = map_recent_df["lat"].astype(float)
     map_recent_df["lon"] = map_recent_df["lon"].astype(float)
@@ -218,7 +217,8 @@ if not map_recent_df.empty:
     layer = pdk.Layer("ScatterplotLayer", data=to_records(map_recent_df), get_position='[lon, lat]',
                        get_fill_color='color', get_radius='radius', pickable=True)
     view_state = pdk.ViewState(latitude=36.3, longitude=127.8, zoom=6.6, pitch=0)
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, controller=False,
+    fixed_view = pdk.View(type="MapView", controller=False)
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, views=[fixed_view],
         tooltip={"html": "<b>{loc}</b><br/>규모 {mt}<br/>진도 {inT}"}))
 else:
     st.info("최근 3일간 표시할 지진 데이터가 없습니다.")
@@ -260,7 +260,7 @@ with b4:
     st.markdown('<div class="behavior-card"><div class="behavior-title">4. 장소별 대응</div>'
                 '<div class="behavior-text">엘리베이터 안에서는 모든 층 버튼을 눌러 가장 먼저 열리는 층에서 내립니다.</div></div>', unsafe_allow_html=True)
 
-# ── 10년 통계 ──
+# ── 이력 통계 ──
 if not history_df.empty:
     valid_dates = history_df["occu_de"].astype(str)
     valid_dates = valid_dates[valid_dates.str.len() == 8]
@@ -344,7 +344,8 @@ if not history_df.empty:
         region_layer = pdk.Layer("ScatterplotLayer", data=to_records(region_df), get_position='[lon, lat]',
                                   get_fill_color='color', get_radius='radius', pickable=True)
         region_view = pdk.ViewState(latitude=36.3, longitude=127.8, zoom=6.4, pitch=0)
-        st.pydeck_chart(pdk.Deck(layers=[region_layer], initial_view_state=region_view, controller=False,
+        fixed_region_view = pdk.View(type="MapView", controller=False)
+        st.pydeck_chart(pdk.Deck(layers=[region_layer], initial_view_state=region_view, views=[fixed_region_view],
             tooltip={"html": "<b>{province}</b><br/>발생 {count}건 ({bin_label})"}))
     with bar_col:
         bar_colors = [BIN_COLORS_HEX[b] for b in region_df["bin_label"]]
