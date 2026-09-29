@@ -29,7 +29,6 @@ PROVINCE_CENTER = {
     "부산": (35.1796, 129.0756), "제주": (33.4996, 126.5312),
 }
 
-# ── 북한 지역 판별용 키워드 (지명이 "북한"으로 시작하지 않는 경우까지 대비) ──
 NORTH_KOREA_KEYWORDS = [
     "북한", "함경북도", "함경남도", "량강도", "양강도", "자강도",
     "평안북도", "평안남도", "황해북도", "황해남도", "평양", "남포",
@@ -177,6 +176,13 @@ div.stButton > button:hover { background: #B3123B; color: #fff; }
 .result-table-wrap { max-height: 420px; overflow-y: auto; border:1px solid #eee; border-radius: 10px; }
 .result-table-wrap table { width: 100%; border-collapse: collapse; }
 .result-table-wrap th, .result-table-wrap td { text-align: center; }
+
+/* ── 내 지역 조회 : 시·도 / 시·군·구 선택 라벨 글자 크게 + 굵게 ── */
+div[data-testid="stWidgetLabel"] p {
+    font-size: 21px !important;
+    font-weight: 800 !important;
+    color: #111111 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -207,7 +213,6 @@ def fetch_history_eq():
     page = 1
     total = None
     while True:
-        # numOfRows를 넉넉히 키워서(700 → 2000) API 호출 횟수를 줄이고 로딩 속도를 개선
         params = {"serviceKey": SAFEMAP_KEY, "pageNo": page, "numOfRows": 2000, "returnType": "JSON"}
         try:
             r = requests.get(SAFEMAP_URL, params=params, timeout=15)
@@ -321,9 +326,6 @@ if not history_df.empty:
     history_df = history_df.dropna(subset=["lat", "lon", "mt"])
     history_df = history_df[history_df["year"].str.isdigit()]
 
-    # ── 북한 지역 완전 제외 (지명 키워드 + 좌표 범위 이중 검증) ──
-    # 기존에는 "북한"으로 시작하는 지명만 걸러냈지만, 실제 데이터는 "함경북도 온성군" 처럼
-    # 접두사 없이 바로 북한 지명이 나오는 경우가 많아 새는 문제가 있었음 → 키워드 목록 + 좌표 범위로 보강.
     def _is_south_korea(row):
         loc = str(row["loc_text"])
         if any(kw in loc for kw in NORTH_KOREA_KEYWORDS):
@@ -489,7 +491,6 @@ if not history_df.empty:
     st.markdown(f'<div class="data-range">📅 데이터 기준 기간 : {start_y}년 1월 ~ {end_y}년 9월 (행정안전부 생활안전지도, 규모 2.0 이상 기준)</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">📌 전체 이력 요약</div>', unsafe_allow_html=True)
 
-    # 위에서 이미 키워드+좌표 이중 필터로 남한 데이터만 남도록 정리했으므로 그대로 사용
     history_kr = history_df.copy()
 
     total_cnt = len(history_kr)
@@ -520,7 +521,6 @@ if not history_df.empty:
 
     st.write("")
 
-    # 연도별
     yearly = history_kr.groupby("year").size().reset_index(name="cnt")
     mean_v, std_v = yearly["cnt"].mean(), yearly["cnt"].std()
     yearly["color"] = yearly["cnt"].apply(lambda x: "#B3123B" if x > mean_v + std_v else "#9c9c9c")
@@ -534,7 +534,6 @@ if not history_df.empty:
     fig_year.update_xaxes(type="category", dtick=1, tickangle=0)
     st.plotly_chart(fig_year, use_container_width=True)
 
-    # 지역별 TOP15 (남한 기준으로 이미 필터링됨)
     city_top = city_counts.head(15).reset_index()
     city_top.columns = ["city", "cnt"]
     city_top["color"] = city_top["cnt"].apply(
@@ -550,7 +549,6 @@ if not history_df.empty:
     fig_city.update_xaxes(tickangle=-30, tickfont=dict(size=17, color="#111111"))
     st.plotly_chart(fig_city, use_container_width=True)
 
-    # 규모별 분포
     bins = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5]
     labels = ["2.0~2.4", "2.5~2.9", "3.0~3.4", "3.5~3.9", "4.0~4.4",
               "4.5~4.9", "5.0~5.4", "5.5~5.9", "6.0~6.4"]
@@ -682,7 +680,7 @@ if not history_df.empty:
 
         result_df = result_df.sort_values("date_str", ascending=False)
 
-        region_label = sel_city if sel_city != "전체" else (sel_province if sel_province != "전체" else "전국(남한)")
+        region_label = sel_city if sel_city != "전체" else (sel_province if sel_province != "전체" else "전국")
 
         if result_df.empty:
             st.markdown(f"<div class='info-empty'>선택하신 '{region_label}' 지역에서는 관측 이력이 없습니다.</div>", unsafe_allow_html=True)
