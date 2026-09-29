@@ -36,10 +36,11 @@ NORTH_KOREA_KEYWORDS = [
     "사리원", "강계", "온성", "무산", "회령", "종성", "경원", "경흥",
 ]
 
+# ── 범례 칩 라벨: 물결(~) 기호 대신 하이픈(-)으로 통일해 폰트 깨짐 방지 ──
 BIN_COLORS = {
-    "0~10건": "#F5B7C4",
-    "11~50건": "#E85D8A",
-    "51~100건": "#B3123B",
+    "0 - 10건": "#F5B7C4",
+    "11 - 50건": "#E85D8A",
+    "51 - 100건": "#B3123B",
     "100건 초과": "#5C0A22",
 }
 
@@ -138,9 +139,9 @@ html, body, [class*="css"]  { font-size: 18px !important; }
 .data-range { font-size: 19px; font-weight: 800; color: #222; margin-bottom: 14px; }
 
 .legend-chip {
-    display:inline-block; padding:6px 14px; border-radius: 20px; color:#fff;
+    display:inline-block; padding:6px 16px; border-radius: 20px; color:#fff;
     font-size: 18px; font-weight: 700; margin-right: 10px; margin-bottom: 8px;
-    white-space: nowrap;
+    white-space: nowrap; letter-spacing: 0.5px;
 }
 .legend-chip-dark { color:#111; border:1px solid #ccc; }
 
@@ -189,6 +190,9 @@ div.stButton > button:hover { background: #B3123B; color: #fff; }
 }
 </style>
 """, unsafe_allow_html=True)
+
+# 모든 Plotly 차트에서 편집 툴바(카메라·확대·이동 등 아이콘)를 숨기기 위한 공통 설정
+PLOTLY_CONFIG = {"displayModeBar": False}
 
 
 @st.cache_data(ttl=180)
@@ -261,11 +265,11 @@ def extract_city(text):
 
 def bin_label(cnt):
     if cnt <= 10:
-        return "0~10건"
+        return "0 - 10건"
     elif cnt <= 50:
-        return "11~50건"
+        return "11 - 50건"
     elif cnt <= 100:
-        return "51~100건"
+        return "51 - 100건"
     else:
         return "100건 초과"
 
@@ -536,7 +540,7 @@ if not history_df.empty:
     ))
     fig_year = style_fig(fig_year, height=440, title=f"연도별 지진 발생 건수 ({start_y}년 1월 ~ {end_y}년 9월)")
     fig_year.update_xaxes(type="category", dtick=1, tickangle=0)
-    st.plotly_chart(fig_year, use_container_width=True)
+    st.plotly_chart(fig_year, use_container_width=True, config=PLOTLY_CONFIG)
 
     city_top = city_counts.head(15).reset_index()
     city_top.columns = ["city", "cnt"]
@@ -551,7 +555,7 @@ if not history_df.empty:
     ))
     fig_city = style_fig(fig_city, height=470, title="지역별(도·시 단위) 지진 발생 건수 TOP 15", bottom_margin=90)
     fig_city.update_xaxes(tickangle=-30, tickfont=dict(size=17, color="#111111"))
-    st.plotly_chart(fig_city, use_container_width=True)
+    st.plotly_chart(fig_city, use_container_width=True, config=PLOTLY_CONFIG)
 
     bins = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5]
     labels = ["2.0~2.4", "2.5~2.9", "3.0~3.4", "3.5~3.9", "4.0~4.4",
@@ -569,7 +573,7 @@ if not history_df.empty:
     fig_mag = style_fig(fig_mag, height=420, title="규모별 발생 분포 (0.5 단위 구간)")
     fig_mag.update_xaxes(title_text="규모 구간")
     fig_mag.update_yaxes(title_text="건수")
-    st.plotly_chart(fig_mag, use_container_width=True)
+    st.plotly_chart(fig_mag, use_container_width=True, config=PLOTLY_CONFIG)
 
     # ---------------- 지역별 발생 빈도 지도 + 강도(진도) 지도 ----------------
     st.markdown('<div class="section-title">🎯 지역별 지진 발생 빈도 · 강도 지도</div>', unsafe_allow_html=True)
