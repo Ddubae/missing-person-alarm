@@ -1,11 +1,8 @@
 import re
-import json
-import math
 from datetime import datetime, timedelta
 
 import requests
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import folium
@@ -23,8 +20,8 @@ SAFEMAP_KEY = "IE6DVJTK-IE6D-IE6D-IE6D-IE6DVJTKDJ"
 KMA_URL = "https://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
 SAFEMAP_URL = "https://www.safemap.go.kr/openapi2/IF_0030"
 
-# 남한 영역만 딱 맞게 보이도록 하는 경계값
-KOREA_BOUNDS = [[33.0, 124.5], [38.7, 130.0]]
+# 남한 영역만 딱 맞게 보이도록 하는 경계값 (정사각형에 가까운 비율)
+KOREA_BOUNDS = [[33.0, 125.2], [38.65, 129.6]]
 
 PROVINCE_CENTER = {
     "서울": (37.5665, 126.9780), "경기": (37.4138, 127.5183), "인천": (37.4563, 126.7052),
@@ -65,21 +62,20 @@ INTENSITY_LEVELS = [
      "video": "https://www.youtube.com/embed/oNTGC34kZtU"},
 ]
 
-# 행동요령 단계 (설명 강화 + 단계별 참고영상)
+# 행동요령 단계별 매뉴얼 + 단계별 참고영상 (강도별 카드와 동일한 방식)
 SAFETY_STEPS = [
-    {"title": "1단계. 평소 대비", 
-     "desc": "가구·가전제품이 넘어지거나 떨어지지 않도록 벽에 단단히 고정해두고, 소화기·손전등·생수 등 비상용품을 미리 챙겨둡니다. 가족과 함께 집·학교·회사 근처의 대피 장소와 만날 장소를 미리 정해둡니다."},
-    {"title": "2단계. 흔들리는 동안",
-     "desc": "당황하지 말고 즉시 책상이나 튼튼한 탁자 아래로 들어가 다리를 꼭 잡습니다. 머리와 목을 가방이나 팔로 보호하고, 흔들림이 완전히 멈출 때까지 그 자리에서 기다립니다."},
-    {"title": "3단계. 흔들림이 멈춘 후",
-     "desc": "가스 밸브를 잠그고 전기 차단기를 내려 화재 위험을 없앤 뒤, 신발을 신고 문을 열어 출구를 확보한 다음 신속하게 밖으로 이동합니다."},
-    {"title": "4단계. 대피 및 장소별 대응",
-     "desc": "엘리베이터는 절대 이용하지 말고 계단으로 이동합니다. 건물 밖에서는 유리창·간판이 떨어질 수 있는 건물 벽면을 피해 운동장이나 공원 등 넓은 공간으로 이동해 안내에 따릅니다."},
-]
-
-SAFETY_VIDEOS = [
-    "https://www.youtube.com/embed/gEf45HNBiK4",
-    "https://www.youtube.com/embed/BF6LZfE7v8o",
+    {"key": "step1", "title": "1단계. 평소 대비",
+     "desc": "가구·가전제품이 넘어지거나 떨어지지 않도록 벽에 단단히 고정해두고, 소화기·손전등·생수 등 비상용품을 미리 챙겨둡니다. 가족과 함께 집·학교·회사 근처의 대피 장소와 만날 장소를 미리 정해둡니다.",
+     "video": "https://www.youtube.com/embed/zO2H4dzGsho"},
+    {"key": "step2", "title": "2단계. 흔들리는 동안",
+     "desc": "당황하지 말고 즉시 책상이나 튼튼한 탁자 아래로 들어가 다리를 꼭 잡습니다. 머리와 목을 가방이나 팔로 보호하고, 흔들림이 완전히 멈출 때까지 그 자리에서 기다립니다.",
+     "video": "https://www.youtube.com/embed/gEf45HNBiK4"},
+    {"key": "step3", "title": "3단계. 흔들림이 멈춘 후",
+     "desc": "가스 밸브를 잠그고 전기 차단기를 내려 화재 위험을 없앤 뒤, 신발을 신고 문을 열어 출구를 확보한 다음 신속하게 밖으로 이동합니다.",
+     "video": "https://www.youtube.com/embed/BF6LZfE7v8o"},
+    {"key": "step4", "title": "4단계. 대피 및 장소별 대응",
+     "desc": "엘리베이터는 절대 이용하지 말고 계단으로 이동합니다. 건물 밖에서는 유리창·간판이 떨어질 수 있는 건물 벽면을 피해 운동장이나 공원 등 넓은 공간으로 이동해 안내에 따릅니다.",
+     "video": "https://www.youtube.com/embed/stOUne88yR0"},
 ]
 
 # =========================================================
@@ -101,37 +97,41 @@ html, body, [class*="css"]  { font-size: 18px !important; }
 }
 
 .ticker-wrap {
-    background: #7a0f24; overflow: hidden; white-space: nowrap;
-    border-radius: 0 0 10px 10px; padding: 10px 0; margin-bottom: 22px;
+    position: relative; background: #7a0f24; overflow: hidden;
+    height: 52px; border-radius: 0 0 10px 10px; margin-bottom: 22px;
 }
 .ticker-move {
-    display: inline-block; white-space: nowrap; color: #fff;
-    font-size: 20px; font-weight: 700;
-    animation: ticker 18s linear infinite;
-    padding-left: 100%;
+    position: absolute; top: 50%; transform: translateY(-50%);
+    white-space: nowrap; color: #fff; font-size: 20px; font-weight: 700;
+    animation: ticker-scroll 16s linear infinite;
 }
-@keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+@keyframes ticker-scroll {
+    from { left: 100%; }
+    to   { left: -120%; }
+}
 
 .section-title { font-size: 24px; font-weight: 800; border-left: 6px solid #B3123B;
     padding-left: 12px; margin: 30px 0 14px 0; }
+.sub-title { font-size: 19px; font-weight: 800; color:#555; margin: 6px 0 14px 0; }
 
 .data-range { font-size: 19px; font-weight: 800; color: #222; margin-bottom: 14px; }
 
 .legend-chip { display:inline-block; padding:6px 14px; border-radius: 20px; color:#fff;
     font-size: 16px; font-weight: 700; margin-right: 10px; }
 
-.stat-card { background:#fafafa; border:1px solid #eee; border-radius: 12px; padding: 20px;
-    text-align:center; }
-.stat-num { font-size: 34px; font-weight: 900; color:#B3123B; }
-.stat-label { font-size: 16px; color:#666; margin-top: 6px; }
+.stat-card { background:#fafafa; border:1px solid #eee; border-radius: 12px; padding: 22px; text-align:center; }
+.stat-label { font-size: 20px; font-weight: 800; color:#333; }
+.stat-num { font-size: 40px; font-weight: 900; color:#B3123B; margin-top: 10px; }
+.stat-sub { font-size: 16px; color:#666; margin-top: 8px; }
 
 .level-card { border-radius: 10px; padding: 16px; text-align:center; color:white;
     font-weight: 800; font-size: 20px; cursor:pointer; }
 .level-sub { font-size: 15px; font-weight: 500; margin-top: 4px; }
 
-.safety-card { background:#f5f5f5; border-radius:10px; padding:18px; height:230px; }
-.safety-title { font-size:18px; font-weight:800; color:#B3123B; }
-.safety-desc { font-size:15px; margin-top:8px; line-height:1.5; }
+.safety-card { border-radius: 10px; padding: 18px; text-align:left; height: 160px;
+    background:#f5f5f5; cursor:pointer; }
+.safety-title { font-size: 19px; font-weight: 800; color:#B3123B; }
+.safety-desc { font-size: 14.5px; margin-top: 8px; line-height:1.5; color:#333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -160,7 +160,7 @@ def fetch_recent_eq():
 
 @st.cache_data(ttl=6 * 3600)
 def fetch_history_eq():
-    """safemap.go.kr 응답 구조: {"header":..., "body":{"items":{"item":[...]}, "totalCount":N}}"""
+    """safemap.go.kr 실제 응답 구조: {"header":..., "body":{"items":{"item":[...]}, "totalCount":N}}"""
     all_rows = []
     page = 1
     total = None
@@ -201,18 +201,13 @@ def extract_province(text):
 
 
 def extract_city(text):
-    if not isinstance(text, str):
+    """'경북 경주시 남남서쪽 9km 지역' -> '경북 경주시' 처럼 도+시군구까지 표기"""
+    if not isinstance(text, str) or not text.strip():
         return "기타"
-    m = re.search(r'([가-힣]{2,6}시)', text)
-    if m:
-        return m.group(1)
-    m = re.search(r'([가-힣]{2,6}군)', text)
-    if m:
-        return m.group(1)
-    m = re.search(r'([가-힣]{2,6}구)', text)
-    if m:
-        return m.group(1)
-    return text[:6] if text else "기타"
+    parts = text.strip().split()
+    if len(parts) >= 2:
+        return f"{parts[0]} {parts[1]}"
+    return parts[0] if parts else "기타"
 
 
 def bin_label(cnt):
@@ -229,7 +224,7 @@ def bin_label(cnt):
 recent_df = fetch_recent_eq()
 history_df = fetch_history_eq()
 
-# 최근 데이터 전처리
+# 최근 데이터 전처리 + 완전 중복 제거
 recent_list = []
 if not recent_df.empty:
     for _, row in recent_df.iterrows():
@@ -261,11 +256,11 @@ if not history_df.empty:
     history_df["year"] = history_df["date_str"].str[:4]
     history_df["province"] = history_df["loc_text"].apply(extract_province)
     history_df["city"] = history_df["loc_text"].apply(extract_city)
-    history_df = history_df.dropna(subset=["lat", "lon"])
-    history_df = history_df[(history_df["year"].str.isdigit())]
+    history_df = history_df.dropna(subset=["lat", "lon", "mt"])
+    history_df = history_df[history_df["year"].str.isdigit()]
 
 # =========================================================
-# 상단 배너 + 속보 티커
+# 상단 배너 + 속보 티커 (단일 패스, 중복 없음)
 # =========================================================
 st.markdown("""
 <div class="hero-box">
@@ -277,21 +272,19 @@ st.markdown("""
 st.markdown('<div class="alert-badge">🔴 최근 3일 이내 발생 알림</div>', unsafe_allow_html=True)
 
 if not unique_recent:
-    ticker_html = '<div class="ticker-move">현재 최근 3일 이내 발생한 지진 속보가 없습니다.&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;현재 최근 3일 이내 발생한 지진 속보가 없습니다.</div>'
+    ticker_text = "현재 최근 3일 이내 발생한 지진 속보가 없습니다."
 else:
     def fmt_item(it):
         t = it["time"]
         t_disp = f"{t[:4]}.{t[4:6]}.{t[6:8]} {t[8:10]}:{t[10:12]}" if len(t) >= 12 else t
         return f'🔴 {t_disp} · 규모 {it["mt"]} · {it["loc"]}'
 
-    items_txt = [fmt_item(it) for it in unique_recent]
-    joined = "&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;".join(items_txt)
-    ticker_html = f'<div class="ticker-move">{joined}&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;{joined}</div>'
+    ticker_text = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(fmt_item(it) for it in unique_recent)
 
-st.markdown(f'<div class="ticker-wrap">{ticker_html}</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="ticker-wrap"><div class="ticker-move">{ticker_text}</div></div>', unsafe_allow_html=True)
 
 # =========================================================
-# 실시간 지진 발생 지도
+# 실시간 지진 발생 지도 (남한만, 정사각형 비율로 확대)
 # =========================================================
 st.markdown('<div class="section-title">🗺️ 실시간 지진 발생 지도</div>', unsafe_allow_html=True)
 
@@ -318,7 +311,9 @@ if unique_recent:
             tooltip=f"{it['loc']} · 규모 {it['mt']}"
         ).add_to(m_recent)
 
-st_folium(m_recent, width=None, height=480, returned_objects=[])
+mc1, mc2, mc3 = st.columns([1, 3, 1])
+with mc2:
+    st_folium(m_recent, width=650, height=650, returned_objects=[])
 
 # =========================================================
 # 진도별 설명 + 영상
@@ -351,9 +346,12 @@ if st.session_state.selected_level:
         st.rerun()
 
 # =========================================================
-# 안전 행동 카드 (단계별 설명 강화 + 참고영상)
+# 안전 행동 요령 (강도별과 동일하게 클릭식 카드 + 단계별 영상)
 # =========================================================
-st.markdown('<div class="section-title">🛡️ 지진 발생 시 행동 요령</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">🛡️ 지진 발생 시 행동 요령 (단계별)</div>', unsafe_allow_html=True)
+
+if "selected_safety" not in st.session_state:
+    st.session_state.selected_safety = None
 
 cols = st.columns(4)
 for col, step in zip(cols, SAFETY_STEPS):
@@ -364,13 +362,17 @@ for col, step in zip(cols, SAFETY_STEPS):
         <div class="safety-desc">{step['desc']}</div>
         </div>
         """, unsafe_allow_html=True)
+        if st.button("▶ 참고영상 보기", key=f"safety_{step['key']}"):
+            st.session_state.selected_safety = step["key"]
+            st.rerun()
 
-st.markdown("##### 🎬 참고 영상 (소방청·행정안전부 공식)")
-v1, v2 = st.columns(2)
-with v1:
-    st.video(SAFETY_VIDEOS[0])
-with v2:
-    st.video(SAFETY_VIDEOS[1])
+if st.session_state.selected_safety:
+    step = next(s for s in SAFETY_STEPS if s["key"] == st.session_state.selected_safety)
+    st.markdown(f"### 🎬 {step['title']} 참고영상")
+    st.video(step["video"])
+    if st.button("✕ 영상 닫기", key="close_safety_video"):
+        st.session_state.selected_safety = None
+        st.rerun()
 
 # =========================================================
 # 이력 통계
@@ -381,6 +383,7 @@ if not history_df.empty:
     years_sorted = sorted(history_df["year"].dropna().unique())
     start_y, end_y = years_sorted[0], years_sorted[-1]
     st.markdown(f'<div class="data-range">📅 데이터 기준 기간 : {start_y}년 1월 ~ {end_y}년 9월 (행정안전부 생활안전지도, 규모 2.0 이상 기준)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">📌 전체 이력 요약 (아래 그래프들과는 별도의 전체 통계입니다)</div>', unsafe_allow_html=True)
 
     total_cnt = len(history_df)
     max_row = history_df.loc[history_df["mt"].idxmax()]
@@ -391,17 +394,26 @@ if not history_df.empty:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(f"""<div class="stat-card"><div class="stat-num">{total_cnt:,}건</div>
-        <div class="stat-label">등록된 전체 지진 건수</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="stat-card">
+        <div class="stat-label">전체 지진 발생 건수</div>
+        <div class="stat-num">{total_cnt:,}건</div>
+        </div>""", unsafe_allow_html=True)
     with c2:
-        st.markdown(f"""<div class="stat-card"><div class="stat-num">규모 {max_row['mt']}</div>
-        <div class="stat-label">역대 최대 규모<br>{max_row['loc_text']}</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="stat-card">
+        <div class="stat-label">역대 최대 규모</div>
+        <div class="stat-num">규모 {max_row['mt']}</div>
+        <div class="stat-sub">{max_row['loc_text']}</div>
+        </div>""", unsafe_allow_html=True)
     with c3:
-        st.markdown(f"""<div class="stat-card"><div class="stat-num">{top_city} {top_city_cnt}건</div>
-        <div class="stat-label">발생 최다 지역 (시 단위)<br>전체의 {top_city_pct}%</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="stat-card">
+        <div class="stat-label">발생 최다 지역</div>
+        <div class="stat-num">{top_city}</div>
+        <div class="stat-sub">{top_city_cnt:,}건 · 전체의 {top_city_pct}%</div>
+        </div>""", unsafe_allow_html=True)
 
     st.write("")
 
+    # ---- 연도별 발생 건수 (모든 연도 x축 표기) ----
     yearly = history_df.groupby("year").size().reset_index(name="cnt")
     mean_v, std_v = yearly["cnt"].mean(), yearly["cnt"].std()
     yearly["color"] = yearly["cnt"].apply(lambda x: "#B3123B" if x > mean_v + std_v else "#B0B0B0")
@@ -409,21 +421,50 @@ if not history_df.empty:
     fig_year = go.Figure(go.Bar(
         x=yearly["year"], y=yearly["cnt"], marker_color=yearly["color"],
         text=[f"{v}건" for v in yearly["cnt"]], textposition="outside",
-        textfont=dict(size=16)
+        textfont=dict(size=15)
     ))
     fig_year.update_layout(
         title=f"연도별 지진 발생 건수 ({start_y}년 1월 ~ {end_y}년 9월)",
-        font=dict(size=16), height=420, margin=dict(t=60, b=40)
+        font=dict(size=16), height=440, margin=dict(t=60, b=50)
     )
+    fig_year.update_xaxes(type="category", dtick=1, tickangle=0)
     st.plotly_chart(fig_year, use_container_width=True)
 
-    fig_mag = px.histogram(history_df, x="mt", nbins=20, title="규모별 발생 분포")
-    fig_mag.update_traces(marker_color="#B3123B")
-    fig_mag.update_layout(font=dict(size=16), height=380)
+    # ---- 지역별(시 단위, 도 포함) 발생 건수 TOP15 : 연도별 그래프 바로 아래 ----
+    city_top = city_counts.head(15).reset_index()
+    city_top.columns = ["city", "cnt"]
+    city_top["color"] = city_top["cnt"].apply(
+        lambda x: "#B3123B" if x == city_top["cnt"].max() else "#B0B0B0"
+    )
+
+    fig_city = go.Figure(go.Bar(
+        x=city_top["city"], y=city_top["cnt"], marker_color=city_top["color"],
+        text=[f"{v}건" for v in city_top["cnt"]], textposition="outside",
+        textfont=dict(size=15)
+    ))
+    fig_city.update_layout(
+        title="지역별(도·시 단위) 지진 발생 건수 TOP 15",
+        font=dict(size=16), height=460, margin=dict(t=60, b=90)
+    )
+    fig_city.update_xaxes(tickangle=-30)
+    st.plotly_chart(fig_city, use_container_width=True)
+
+    # ---- 규모별 발생 분포 (구간 명확히 재설정) ----
+    fig_mag = go.Figure(go.Histogram(
+        x=history_df["mt"], xbins=dict(start=2.0, end=6.2, size=0.2),
+        marker_color="#B3123B"
+    ))
+    fig_mag.update_layout(
+        title="규모별 발생 분포 (규모 2.0 이상, 0.2 단위 구간)",
+        xaxis_title="규모 (매그니튜드)", yaxis_title="건수",
+        font=dict(size=16), height=400, margin=dict(t=60, b=50)
+    )
     st.plotly_chart(fig_mag, use_container_width=True)
 
+    # =========================================================
     # 지역별 발생 빈도 지도
-    st.markdown('<div class="section-title">🎯 지역별 지진 발생 빈도</div>', unsafe_allow_html=True)
+    # =========================================================
+    st.markdown('<div class="section-title">🎯 지역별 지진 발생 빈도 지도</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="data-range">📅 데이터 기준 기간 : {start_y}년 1월 ~ {end_y}년 9월</div>', unsafe_allow_html=True)
 
     legend_html = "".join([
@@ -458,25 +499,9 @@ if not history_df.empty:
             popup=folium.Popup(popup_html, max_width=260),
         ).add_to(m_freq)
 
-    st_folium(m_freq, width=None, height=520, returned_objects=[])
-
-    city_top = city_counts.head(15).reset_index()
-    city_top.columns = ["city", "cnt"]
-    city_top["color"] = city_top["cnt"].apply(
-        lambda x: "#B3123B" if x == city_top["cnt"].max() else "#B0B0B0"
-    )
-
-    fig_city = go.Figure(go.Bar(
-        x=city_top["city"], y=city_top["cnt"], marker_color=city_top["color"],
-        text=[f"{v}건" for v in city_top["cnt"]], textposition="outside",
-        textfont=dict(size=16)
-    ))
-    fig_city.update_layout(
-        title="지역별(시 단위) 지진 발생 건수 TOP 15",
-        font=dict(size=16), height=440, margin=dict(t=60, b=80)
-    )
-    fig_city.update_xaxes(tickangle=-30)
-    st.plotly_chart(fig_city, use_container_width=True)
+    fc1, fc2, fc3 = st.columns([1, 3, 1])
+    with fc2:
+        st_folium(m_freq, width=650, height=650, returned_objects=[])
 
 else:
     st.warning("이력 데이터를 불러오지 못했습니다. API 키 또는 네트워크 상태를 확인해주세요.")
