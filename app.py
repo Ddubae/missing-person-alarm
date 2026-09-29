@@ -137,8 +137,11 @@ html, body, [class*="css"]  { font-size: 18px !important; }
 .sub-title { font-size: 21px; font-weight: 800; color:#555; margin: 6px 0 14px 0; }
 .data-range { font-size: 19px; font-weight: 800; color: #222; margin-bottom: 14px; }
 
-.legend-chip { display:inline-block; padding:6px 14px; border-radius: 20px; color:#fff;
-    font-size: 18px; font-weight: 700; margin-right: 10px; margin-bottom: 8px; }
+.legend-chip {
+    display:inline-block; padding:6px 14px; border-radius: 20px; color:#fff;
+    font-size: 18px; font-weight: 700; margin-right: 10px; margin-bottom: 8px;
+    white-space: nowrap;
+}
 .legend-chip-dark { color:#111; border:1px solid #ccc; }
 
 .stat-card { background:#fafafa; border:1px solid #eee; border-radius: 12px; padding: 22px; text-align:center; }
@@ -177,11 +180,12 @@ div.stButton > button:hover { background: #B3123B; color: #fff; }
 .result-table-wrap table { width: 100%; border-collapse: collapse; }
 .result-table-wrap th, .result-table-wrap td { text-align: center; }
 
-/* ── 내 지역 조회 : 시·도 / 시·군·구 선택 라벨 글자 크게 + 굵게 ── */
-div[data-testid="stWidgetLabel"] p {
-    font-size: 21px !important;
-    font-weight: 800 !important;
+/* ── 내 지역 조회 : 시·도 / 시·군·구 커스텀 라벨 (Streamlit 기본 라벨 대체) ── */
+.region-select-label {
+    font-size: 24px !important;
+    font-weight: 900 !important;
     color: #111111 !important;
+    margin-bottom: 6px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -662,15 +666,23 @@ if not history_df.empty:
 
         s1, s2 = st.columns(2)
         with s1:
-            sel_province = st.selectbox("① 시·도 선택", ["전체"] + available_provinces, key="my_region_province")
+            st.markdown('<div class="region-select-label">① 시·도 선택</div>', unsafe_allow_html=True)
+            sel_province = st.selectbox(
+                "시도선택", ["전체"] + available_provinces,
+                key="my_region_province", label_visibility="collapsed"
+            )
         with s2:
+            st.markdown('<div class="region-select-label">② 시·군·구 선택</div>', unsafe_allow_html=True)
             if sel_province == "전체":
                 city_options = ["전체"] + sorted(history_kr["city"].unique().tolist())
             else:
                 city_options = ["전체"] + sorted(
                     history_kr[history_kr["province"] == sel_province]["city"].unique().tolist()
                 )
-            sel_city = st.selectbox("② 시·군·구 선택", city_options, key="my_region_city")
+            sel_city = st.selectbox(
+                "시군구선택", city_options,
+                key="my_region_city", label_visibility="collapsed"
+            )
 
         result_df = history_kr.copy()
         if sel_province != "전체":
