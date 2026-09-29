@@ -18,6 +18,8 @@ KMA_URL = "https://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
 SAFEMAP_URL = "https://www.safemap.go.kr/openapi2/IF_0030"
 
 KOREA_BOUNDS = [[33.0, 125.2], [38.65, 129.6]]
+# 칸 크기는 그대로 두고, 지도만 더 확대되게 만드는 음수 패딩값
+ZOOM_IN_PADDING = 60
 
 PROVINCE_CENTER = {
     "서울": (37.5665, 126.9780), "경기": (37.4138, 127.5183), "인천": (37.4563, 126.7052),
@@ -35,7 +37,6 @@ BIN_COLORS = {
     "100건 초과": "#5C0A22",
 }
 
-# 진도(강도) 등급별 색상 - 지역별 빈도 지도와 동일한 톤으로 연한색→진한색 배치
 INTENSITY_MAP_COLORS = {
     1: "#D6EAF8", 2: "#AED6F1", 3: "#7FB3D5", 4: "#F9E79F",
     5: "#F5B041", 6: "#E67E22", 7: "#D35400", 8: "#C0392B",
@@ -48,6 +49,25 @@ def intensity_color(grade):
     except (TypeError, ValueError):
         g = 1
     return INTENSITY_MAP_COLORS.get(min(max(g, 1), 12), "#999999")
+
+
+def fit_bounds_zoomed(m, bounds, pad=ZOOM_IN_PADDING):
+    """칸 크기는 그대로 두고, 지도 표시 영역만 더 좁혀서(=확대) 렌더링"""
+    m.fit_bounds(
+        bounds,
+        padding_top_left=(-pad, -pad),
+        padding_bottom_right=(-pad, -pad),
+    )
+
+
+def clean_paren(text):
+    """괄호와 그 안의 내용을 제거"""
+    if not isinstance(text, str):
+        return text
+    cleaned = re.sub(r"\([^)]*\)", "", text)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+    return cleaned
+
 
 INTENSITY_LEVELS = [
     {"key": "1_2", "label": "진도 Ⅰ~Ⅱ", "desc": "거의 느낄 수 없음",
@@ -93,24 +113,24 @@ html, body, [class*="css"]  { font-size: 18px !important; }
 .hero-sub { font-size: 16px; opacity: 0.9; margin-top: 4px; }
 
 .alert-badge {
-    background:#B3123B; color:#fff; display:inline-block; padding:6px 16px;
-    border-radius: 20px; font-size:16px; font-weight:800; margin: 14px 0 8px 0;
+    background:#B3123B; color:#fff; display:inline-block; padding:8px 20px;
+    border-radius: 20px; font-size:19px; font-weight:800; margin: 14px 0 8px 0;
 }
 
 .ticker-wrap {
     position: relative; background: #7a0f24; overflow: hidden;
-    height: 52px; border-radius: 0 0 10px 10px; margin-bottom: 22px;
+    height: 56px; border-radius: 0 0 10px 10px; margin-bottom: 22px;
 }
 .ticker-move {
     position: absolute; top: 50%; transform: translateY(-50%);
-    white-space: nowrap; color: #fff; font-size: 20px; font-weight: 700;
+    white-space: nowrap; color: #fff; font-size: 24px; font-weight: 700;
     animation-name: ticker-scroll; animation-timing-function: linear; animation-iteration-count: infinite;
 }
 @keyframes ticker-scroll { from { left: 100%; } to { left: -140%; } }
 
 .section-title { font-size: 24px; font-weight: 800; border-left: 6px solid #B3123B;
     padding-left: 12px; margin: 30px 0 14px 0; }
-.sub-title { font-size: 19px; font-weight: 800; color:#555; margin: 6px 0 14px 0; }
+.sub-title { font-size: 21px; font-weight: 800; color:#555; margin: 6px 0 14px 0; }
 .data-range { font-size: 19px; font-weight: 800; color: #222; margin-bottom: 14px; }
 
 .legend-chip { display:inline-block; padding:6px 14px; border-radius: 20px; color:#fff;
@@ -122,17 +142,15 @@ html, body, [class*="css"]  { font-size: 18px !important; }
 .stat-num { font-size: 40px; font-weight: 900; color:#B3123B; margin-top: 10px; }
 .stat-sub { font-size: 16px; color:#666; margin-top: 8px; }
 
-.level-card { border-radius: 10px 10px 0 0; padding: 16px; text-align:center; color:white;
-    font-weight: 800; font-size: 20px; }
-.level-sub { font-size: 15px; font-weight: 500; margin-top: 4px; }
+.level-card { border-radius: 10px 10px 0 0; padding: 18px; text-align:center; color:white;
+    font-weight: 800; font-size: 23px; }
+.level-sub { font-size: 18px; font-weight: 600; margin-top: 6px; }
 
-/* 행동요령 카드: 높이를 고정하지 않고 자동으로 늘어나게 하고, 글자를 크게 */
 .safety-card { border-radius: 10px 10px 0 0; padding: 20px; text-align:left;
     min-height: 220px; background:#f5f5f5; }
 .safety-title { font-size: 21px; font-weight: 800; color:#B3123B; }
 .safety-desc { font-size: 18px; margin-top: 10px; line-height:1.7; color:#222; font-weight:500; }
 
-/* 영상보기 버튼 예쁘게 + 가운데 정렬 */
 div.stButton > button {
     width: 100%; border-radius: 0 0 10px 10px; border: none;
     background: #333; color: #fff; font-weight: 700; font-size: 16px;
@@ -141,14 +159,13 @@ div.stButton > button {
 }
 div.stButton > button:hover { background: #B3123B; color: #fff; }
 
-/* 지도 옆 정보 패널 - 여백을 채우는 카드 */
 .info-panel { background:#fafafa; border:1px solid #eee; border-radius: 12px;
     padding: 20px; height: 100%; }
-.info-panel-title { font-size: 19px; font-weight: 800; color:#222; margin-bottom: 12px; }
+.info-panel-title { font-size: 22px; font-weight: 800; color:#222; margin-bottom: 12px; }
 .info-item { background:#fff; border:1px solid #eee; border-left:5px solid #B3123B;
     border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
-.info-item-main { font-size: 16.5px; font-weight: 700; color:#111; }
-.info-item-sub { font-size: 14.5px; color:#666; margin-top: 4px; }
+.info-item-main { font-size: 19px; font-weight: 700; color:#111; }
+.info-item-sub { font-size: 17px; color:#555; margin-top: 4px; }
 .info-empty { font-size: 16px; color:#888; padding: 10px 0; }
 </style>
 """, unsafe_allow_html=True)
@@ -305,14 +322,15 @@ st.markdown('<div class="alert-badge">🔴 최근 3일 이내 발생 알림</div
 
 if not unique_recent:
     ticker_text = "현재 최근 3일 이내 발생한 지진 속보가 없습니다."
-    duration = 25
+    duration = 18
 else:
     def fmt_item(it):
         t = it["time"]
         t_disp = f"{t[:4]}.{t[4:6]}.{t[6:8]} {t[8:10]}:{t[10:12]}" if len(t) >= 12 else t
         return f'🔴 {t_disp} · 규모 {it["mt"]} · {it["loc"]}'
     ticker_text = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(fmt_item(it) for it in unique_recent)
-    duration = max(30, len(ticker_text) // 8)
+    # 조금 더 빠르게: 최소값과 글자당 가중치를 줄임
+    duration = max(20, len(ticker_text) // 12)
 
 st.markdown(
     f'<div class="ticker-wrap"><div class="ticker-move" style="animation-duration:{duration}s;">{ticker_text}</div></div>',
@@ -328,7 +346,7 @@ with map_col:
     m_recent = folium.Map(location=[36.0, 127.7], tiles="OpenStreetMap",
                            zoom_control=False, scrollWheelZoom=False, dragging=False,
                            doubleClickZoom=False, touchZoom=False)
-    m_recent.fit_bounds(KOREA_BOUNDS)
+    fit_bounds_zoomed(m_recent, KOREA_BOUNDS)
 
     if unique_recent:
         for it in unique_recent:
@@ -338,7 +356,7 @@ with map_col:
             <div style='font-size:15px; line-height:1.6;'>
             <b>📍 진원지 :</b> {it['loc']}<br>
             <b>강도(규모) :</b> {it['mt']}<br>
-            <b>진도 :</b> {it['inT']}
+            <b>진도 :</b> {clean_paren(it['inT'])}
             </div>
             """
             folium.CircleMarker(
@@ -355,8 +373,8 @@ with info_col:
     st.markdown(f"""
     <div class="info-panel">
         <div class="info-panel-title">📋 최근 3일 이내 발생 현황</div>
-        <div style="font-size:16px; color:#555; margin-bottom:14px;">
-            현재까지 접수된 최근 3일 이내 지진은 총 <b style="color:#B3123B; font-size:20px;">{len(unique_recent)}건</b> 입니다.
+        <div style="font-size:17px; color:#555; margin-bottom:14px;">
+            현재까지 접수된 최근 3일 이내 지진은 총 <b style="color:#B3123B; font-size:21px;">{len(unique_recent)}건</b> 입니다.
         </div>
     """, unsafe_allow_html=True)
 
@@ -369,7 +387,7 @@ with info_col:
             st.markdown(f"""
             <div class="info-item">
                 <div class="info-item-main">📍 {it['loc']}</div>
-                <div class="info-item-sub">규모 {it['mt']} · 진도 {it['inT']} · {t_disp}</div>
+                <div class="info-item-sub">규모 {it['mt']} · 진도 {clean_paren(it['inT'])} · {t_disp}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -407,7 +425,7 @@ if st.session_state.selected_level:
             st.session_state.selected_level = None
             st.rerun()
 
-# ---------------- 안전 행동 요령 (글자 크게, 카드 자동 높이) ----------------
+# ---------------- 안전 행동 요령 ----------------
 st.markdown('<div class="section-title">🛡️ 지진 발생 시 행동 요령 (단계별)</div>', unsafe_allow_html=True)
 
 if "selected_safety" not in st.session_state:
@@ -445,7 +463,7 @@ if not history_df.empty:
     years_sorted = sorted(history_df["year"].dropna().unique())
     start_y, end_y = years_sorted[0], years_sorted[-1]
     st.markdown(f'<div class="data-range">📅 데이터 기준 기간 : {start_y}년 1월 ~ {end_y}년 9월 (행정안전부 생활안전지도, 규모 2.0 이상 기준)</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">📌 전체 이력 요약 (아래 그래프들과는 별도의 전체 통계입니다)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">📌 전체 이력 요약</div>', unsafe_allow_html=True)
 
     total_cnt = len(history_df)
     max_row = history_df.loc[history_df["mt"].idxmax()]
@@ -505,7 +523,7 @@ if not history_df.empty:
     fig_city.update_xaxes(tickangle=-30, tickfont=dict(size=15, color="#111111"))
     st.plotly_chart(fig_city, use_container_width=True)
 
-    # 규모별 분포 (0.5 구간 막대그래프)
+    # 규모별 분포
     bins = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5]
     labels = ["2.0~2.4", "2.5~2.9", "3.0~3.4", "3.5~3.9", "4.0~4.4",
               "4.5~4.9", "5.0~5.4", "5.5~5.9", "6.0~6.4"]
@@ -524,7 +542,7 @@ if not history_df.empty:
     fig_mag.update_yaxes(title_text="건수")
     st.plotly_chart(fig_mag, use_container_width=True)
 
-    # ---------------- 지역별 발생 빈도 지도 + 강도(진도) 지도 (나란히 배치, 여백 없이) ----------------
+    # ---------------- 지역별 발생 빈도 지도 + 강도(진도) 지도 ----------------
     st.markdown('<div class="section-title">🎯 지역별 지진 발생 빈도 · 강도 지도</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="data-range">📅 데이터 기준 기간 : {start_y}년 1월 ~ {end_y}년 9월</div>', unsafe_allow_html=True)
 
@@ -532,7 +550,6 @@ if not history_df.empty:
 
     freq_col, intensity_col = st.columns(2)
 
-    # ── 왼쪽: 발생 빈도 지도 ──
     with freq_col:
         st.markdown("<div style='font-size:19px; font-weight:800; margin-bottom:8px;'>🔴 지역별 발생 빈도</div>", unsafe_allow_html=True)
         legend_html = "".join([
@@ -545,7 +562,7 @@ if not history_df.empty:
         m_freq = folium.Map(location=[36.0, 127.7], tiles="OpenStreetMap",
                              zoom_control=False, scrollWheelZoom=False, dragging=False,
                              doubleClickZoom=False, touchZoom=False)
-        m_freq.fit_bounds(KOREA_BOUNDS)
+        fit_bounds_zoomed(m_freq, KOREA_BOUNDS)
 
         for _, row in history_df.iterrows():
             prov = row["province"]
@@ -568,7 +585,6 @@ if not history_df.empty:
         with st.container(border=True):
             st_folium(m_freq, width=None, height=560, use_container_width=True, returned_objects=[])
 
-    # ── 오른쪽: 강도(진도) 지도 ──
     with intensity_col:
         st.markdown("<div style='font-size:19px; font-weight:800; margin-bottom:8px;'>🟠 지역별 발생 강도(진도)</div>", unsafe_allow_html=True)
 
@@ -583,7 +599,7 @@ if not history_df.empty:
         m_intensity = folium.Map(location=[36.0, 127.7], tiles="OpenStreetMap",
                                   zoom_control=False, scrollWheelZoom=False, dragging=False,
                                   doubleClickZoom=False, touchZoom=False)
-        m_intensity.fit_bounds(KOREA_BOUNDS)
+        fit_bounds_zoomed(m_intensity, KOREA_BOUNDS)
 
         for _, row in history_df.iterrows():
             grade = row["intensity"]
