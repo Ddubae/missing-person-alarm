@@ -3,6 +3,7 @@ import requests
 import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
+import json
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="대한민국 지진 현황 알리미", page_icon="🌍", layout="wide")
@@ -86,6 +87,13 @@ html, body, [class*="css"]  { font-size: 18px; }
 .source-note { font-size: 13.5px; color: #9E9E9E; margin-top: 22px; line-height: 1.7; }
 </style>
 """, unsafe_allow_html=True)
+
+# ── pydeck 안전 변환 헬퍼 ──
+def to_records(df):
+    """데이터프레임을 pydeck이 안전하게 처리할 수 있는 순수 파이썬 타입 리스트로 변환"""
+    if df is None or df.empty:
+        return []
+    return json.loads(df.to_json(orient="records"))
 
 # ── 데이터 수집 함수 ──
 @st.cache_data(ttl=180)
@@ -179,6 +187,13 @@ if not recent_df.empty:
     recent_df["mag_val"] = pd.to_numeric(recent_df["mt"], errors="coerce")
     recent_df["color"] = recent_df["mag_val"].apply(mag_color)
     recent_df["radius"] = recent_df["mag_val"].fillna(2) * 2500 + 3000
+    # pydeck 직렬화 안전을 위해 지도용 컬럼만 남기고 문자열/숫자 타입 정리
+    map_recent_df = recent_df[["lat", "lon", "loc", "mt", "inT", "color", "radius"]].copy()
+    map_recent_df["lat"] = map_recent_df["lat"].astype(float)
+    map_recent_df["lon"] = map_recent_df["lon"].astype(float)
+    map_recent_df["radius"] = map_recent_df["radius"].astype(float)
+else:
+    map_recent_df = pd.DataFrame()
 
 # ── 헤더 ──
 st.markdown('<div class="hero-box"><div class="hero-title">🌍 대한민국 지진 현황 알리미</div>'
@@ -199,8 +214,8 @@ st.markdown(f'<div class="ticker-wrap"><div class="ticker-move">{content}</div><
 
 # ── 실시간 지진 지도 (최근 3일) ──
 st.markdown('<div class="section-title">🗺️ 실시간 지진 발생 지도 (최근 3일)</div>', unsafe_allow_html=True)
-if not recent_df.empty and "lat" in recent_df.columns:
-    layer = pdk.Layer("ScatterplotLayer", data=recent_df, get_position='[lon, lat]',
+if not map_recent_df.empty:
+    layer = pdk.Layer("ScatterplotLayer", data=to_records(map_recent_df), get_position='[lon, lat]',
                        get_fill_color='color', get_radius='radius', pickable=True)
     view_state = pdk.ViewState(latitude=36.3, longitude=127.8, zoom=6.6, pitch=0)
     st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, controller=False,
@@ -320,13 +335,13 @@ if not history_df.empty:
         cnt = counts.get(prov, 0)
         label = bin_label(cnt)
         radius = 7000 + (cnt ** 0.5) * 3500
-        rows.append({"province": prov, "lat": lat, "lon": lon, "count": cnt,
-                      "color": BIN_COLORS_RGB[label], "radius": radius, "bin_label": label})
+        rows.append({"province": prov, "lat": float(lat), "lon": float(lon), "count": int(cnt),
+                      "color": BIN_COLORS_RGB[label], "radius": float(radius), "bin_label": label})
     region_df = pd.DataFrame(rows).sort_values("count", ascending=False)
 
     map_col, bar_col = st.columns([1.1, 1])
     with map_col:
-        region_layer = pdk.Layer("ScatterplotLayer", data=region_df, get_position='[lon, lat]',
+        region_layer = pdk.Layer("ScatterplotLayer", data=to_records(region_df), get_position='[lon, lat]',
                                   get_fill_color='color', get_radius='radius', pickable=True)
         region_view = pdk.ViewState(latitude=36.3, longitude=127.8, zoom=6.4, pitch=0)
         st.pydeck_chart(pdk.Deck(layers=[region_layer], initial_view_state=region_view, controller=False,
