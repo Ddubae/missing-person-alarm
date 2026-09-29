@@ -18,7 +18,6 @@ KMA_URL = "https://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
 SAFEMAP_URL = "https://www.safemap.go.kr/openapi2/IF_0030"
 
 KOREA_BOUNDS = [[33.0, 125.2], [38.65, 129.6]]
-# 칸 크기는 그대로 두고, 지도만 더 확대되게 만드는 음수 패딩값
 ZOOM_IN_PADDING = 60
 
 PROVINCE_CENTER = {
@@ -52,7 +51,6 @@ def intensity_color(grade):
 
 
 def fit_bounds_zoomed(m, bounds, pad=ZOOM_IN_PADDING):
-    """칸 크기는 그대로 두고, 지도 표시 영역만 더 좁혀서(=확대) 렌더링"""
     m.fit_bounds(
         bounds,
         padding_top_left=(-pad, -pad),
@@ -61,7 +59,6 @@ def fit_bounds_zoomed(m, bounds, pad=ZOOM_IN_PADDING):
 
 
 def clean_paren(text):
-    """괄호와 그 안의 내용을 제거"""
     if not isinstance(text, str):
         return text
     cleaned = re.sub(r"\([^)]*\)", "", text)
@@ -167,6 +164,9 @@ div.stButton > button:hover { background: #B3123B; color: #fff; }
 .info-item-main { font-size: 19px; font-weight: 700; color:#111; }
 .info-item-sub { font-size: 17px; color:#555; margin-top: 4px; }
 .info-empty { font-size: 16px; color:#888; padding: 10px 0; }
+
+/* 내 지역 조회 섹션 */
+.search-box { background:#fafafa; border:1px solid #eee; border-radius: 12px; padding: 24px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -329,7 +329,6 @@ else:
         t_disp = f"{t[:4]}.{t[4:6]}.{t[6:8]} {t[8:10]}:{t[10:12]}" if len(t) >= 12 else t
         return f'🔴 {t_disp} · 규모 {it["mt"]} · {it["loc"]}'
     ticker_text = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(fmt_item(it) for it in unique_recent)
-    # 조금 더 빠르게: 최소값과 글자당 가중치를 줄임
     duration = max(20, len(ticker_text) // 12)
 
 st.markdown(
@@ -337,7 +336,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ---------------- 실시간 지진 발생 지도 (여백을 정보 패널로 채움) ----------------
+# ---------------- 실시간 지진 발생 지도 ----------------
 st.markdown('<div class="section-title">🗺️ 실시간 지진 발생 지도</div>', unsafe_allow_html=True)
 
 map_col, info_col = st.columns([1.3, 1])
@@ -465,9 +464,12 @@ if not history_df.empty:
     st.markdown(f'<div class="data-range">📅 데이터 기준 기간 : {start_y}년 1월 ~ {end_y}년 9월 (행정안전부 생활안전지도, 규모 2.0 이상 기준)</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">📌 전체 이력 요약</div>', unsafe_allow_html=True)
 
-    total_cnt = len(history_df)
-    max_row = history_df.loc[history_df["mt"].idxmax()]
-    city_counts = history_df["city"].value_counts()
+    # ── 북한 지역 제외: 남한만 집계 ──
+    history_kr = history_df[~history_df["loc_text"].astype(str).str.startswith("북한")].copy()
+
+    total_cnt = len(history_kr)
+    max_row = history_kr.loc[history_kr["mt"].idxmax()]
+    city_counts = history_kr["city"].value_counts()
     top_city = city_counts.index[0]
     top_city_cnt = city_counts.iloc[0]
     top_city_pct = round(top_city_cnt / total_cnt * 100, 1)
@@ -494,7 +496,7 @@ if not history_df.empty:
     st.write("")
 
     # 연도별
-    yearly = history_df.groupby("year").size().reset_index(name="cnt")
+    yearly = history_kr.groupby("year").size().reset_index(name="cnt")
     mean_v, std_v = yearly["cnt"].mean(), yearly["cnt"].std()
     yearly["color"] = yearly["cnt"].apply(lambda x: "#B3123B" if x > mean_v + std_v else "#9c9c9c")
 
@@ -507,7 +509,7 @@ if not history_df.empty:
     fig_year.update_xaxes(type="category", dtick=1, tickangle=0)
     st.plotly_chart(fig_year, use_container_width=True)
 
-    # 지역별 TOP15
+    # 지역별 TOP15 (북한 제외, 남한만)
     city_top = city_counts.head(15).reset_index()
     city_top.columns = ["city", "cnt"]
     city_top["color"] = city_top["cnt"].apply(
@@ -519,7 +521,7 @@ if not history_df.empty:
         text=[f"{v}건" for v in city_top["cnt"]], textposition="outside",
         textfont=dict(size=17, color="#111111")
     ))
-    fig_city = style_fig(fig_city, height=470, title="지역별(도·시 단위) 지진 발생 건수 TOP 15", bottom_margin=90)
+    fig_city = style_fig(fig_city, height=470, title="지역별(도·시 단위) 지진 발생 건수 TOP 15 (남한 기준)", bottom_margin=90)
     fig_city.update_xaxes(tickangle=-30, tickfont=dict(size=15, color="#111111"))
     st.plotly_chart(fig_city, use_container_width=True)
 
@@ -620,6 +622,87 @@ if not history_df.empty:
 
         with st.container(border=True):
             st_folium(m_intensity, width=None, height=560, use_container_width=True, returned_objects=[])
+
+    # ---------------- 내 지역 지진 발생기록 찾기 (신규) ----------------
+    st.markdown('<div class="section-title">🔎 내 지역 지진 발생기록 찾기</div>', unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:17px; color:#555; margin-bottom:16px;'>"
+        "실제 관측 데이터를 기반으로, 원하시는 시·도와 시·군·구를 선택하면 해당 지역에서 발생한 "
+        "지진 이력을 날짜·규모·진도까지 모두 조회할 수 있습니다.</div>",
+        unsafe_allow_html=True
+    )
+
+    with st.container():
+        st.markdown('<div class="search-box">', unsafe_allow_html=True)
+
+        available_provinces = sorted(
+            [p for p in history_kr["province"].unique() if p != "기타"]
+        )
+
+        s1, s2 = st.columns(2)
+        with s1:
+            sel_province = st.selectbox("① 시·도 선택", ["전체"] + available_provinces, key="my_region_province")
+        with s2:
+            if sel_province == "전체":
+                city_options = ["전체"] + sorted(history_kr["city"].unique().tolist())
+            else:
+                city_options = ["전체"] + sorted(
+                    history_kr[history_kr["province"] == sel_province]["city"].unique().tolist()
+                )
+            sel_city = st.selectbox("② 시·군·구 선택", city_options, key="my_region_city")
+
+        result_df = history_kr.copy()
+        if sel_province != "전체":
+            result_df = result_df[result_df["province"] == sel_province]
+        if sel_city != "전체":
+            result_df = result_df[result_df["city"] == sel_city]
+
+        result_df = result_df.sort_values("date_str", ascending=False)
+
+        region_label = sel_city if sel_city != "전체" else (sel_province if sel_province != "전체" else "전국(남한)")
+
+        if result_df.empty:
+            st.markdown(f"<div class='info-empty'>선택하신 '{region_label}' 지역에서는 관측 이력이 없습니다.</div>", unsafe_allow_html=True)
+        else:
+            r_total = len(result_df)
+            r_max = result_df.loc[result_df["mt"].idxmax()]
+            r_latest = result_df.iloc[0]
+
+            rc1, rc2, rc3 = st.columns(3)
+            with rc1:
+                st.markdown(f"""<div class="stat-card">
+                <div class="stat-label">{region_label} 발생 건수</div>
+                <div class="stat-num">{r_total:,}건</div>
+                </div>""", unsafe_allow_html=True)
+            with rc2:
+                st.markdown(f"""<div class="stat-card">
+                <div class="stat-label">최대 규모</div>
+                <div class="stat-num">규모 {r_max['mt']}</div>
+                <div class="stat-sub">{fmt_date(r_max['date_str'])}</div>
+                </div>""", unsafe_allow_html=True)
+            with rc3:
+                st.markdown(f"""<div class="stat-card">
+                <div class="stat-label">가장 최근 발생</div>
+                <div class="stat-num">{fmt_date(r_latest['date_str'])}</div>
+                <div class="stat-sub">규모 {r_latest['mt']}</div>
+                </div>""", unsafe_allow_html=True)
+
+            st.write("")
+
+            table_df = result_df[["date_str", "loc_text", "mt", "intensity"]].copy()
+            table_df["date_str"] = table_df["date_str"].apply(fmt_date)
+            table_df["intensity"] = table_df["intensity"].apply(
+                lambda g: f"진도 {int(g)}" if pd.notna(g) else "-"
+            )
+            table_df.columns = ["발생일자", "진원지(상세위치)", "규모", "진도"]
+
+            st.dataframe(
+                table_df.reset_index(drop=True),
+                use_container_width=True,
+                height=420,
+            )
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 else:
     st.warning("이력 데이터를 불러오지 못했습니다. API 키 또는 네트워크 상태를 확인해주세요.")
