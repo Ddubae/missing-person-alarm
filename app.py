@@ -1,358 +1,296 @@
 import streamlit as st
 import requests
 import pandas as pd
-import base64
-from datetime import datetime
 import plotly.graph_objects as go
+import pydeck as pdk
+from datetime import datetime, timedelta
 
-# ────────────────────────────────
-# 기본 설정
-# ────────────────────────────────
-st.set_page_config(
-    page_title="실종아동·취약계층 실종정보 알리미",
-    page_icon="🔍",
-    layout="wide"
-)
+st.set_page_config(page_title="대한민국 지진 현황 알리미", page_icon="🌍", layout="wide")
 
-ESNTL_ID = "10001061"
-AUTH_KEY = "bc9ff0e7eedc4228"
-FIND_CHILD_URL = "https://www.safe182.go.kr/api/lcm/findChildList.do"
+# ── 인증키 및 API 상수 ──
+KMA_KEY = "69bb08cc0eacf8cbdfffc6b9b4ecf242d33a1cc5955004d3048de6fb54c985df"
+KMA_URL = "https://apis.data.go.kr/1360000/EqkInfoService/getEqkMsg"
+SAFEMAP_KEY = "IE6DVJTK-IE6D-IE6D-IE6D-IE6DVJTKDJ"
+SAFEMAP_URL = "https://www.safemap.go.kr/openapi2/IF_0030"
 
-TARGET_LABELS = {
-    "010": "정상아동(18세미만)",
-    "020": "가출인",
-    "040": "시설보호무연고자",
-    "060": "지적장애인",
-    "061": "지적장애인(18세미만)",
-    "062": "지적장애인(18세이상)",
-    "070": "치매질환자",
-    "080": "기타"
+PROVINCE_CENTER = {
+    "서울": (37.5665, 126.9780), "부산": (35.1796, 129.0756), "대구": (35.8714, 128.6014),
+    "인천": (37.4563, 126.7052), "광주": (35.1595, 126.8526), "대전": (36.3504, 127.3845),
+    "울산": (35.5384, 129.3114), "세종": (36.4801, 127.2890), "경기": (37.4138, 127.5183),
+    "강원": (37.8228, 128.1555), "충북": (36.6357, 127.4917), "충남": (36.5184, 126.8000),
+    "전북": (35.7175, 127.1530), "전남": (34.8679, 126.9910), "경북": (36.4919, 128.8889),
+    "경남": (35.4606, 128.2132), "제주": (33.4996, 126.5312),
 }
 
-TARGET_COLOR = {
-    "010": "#1565C0",
-    "020": "#6D4C41",
-    "040": "#546E7A",
-    "060": "#7B1FA2",
-    "061": "#7B1FA2",
-    "062": "#7B1FA2",
-    "070": "#2E7D32",
-    "080": "#455A64"
-}
+INTENSITY_LEVELS = [
+    {"key": "low", "range": "진도 Ⅰ~Ⅱ", "title": "거의 느낄 수 없음",
+     "desc": "특별히 좋은 조건에서 극소수만 느끼며, 대부분 지진계에만 기록되는 수준입니다.",
+     "video": "z2k9cCdAIWQ", "src": "기상청 실시간 지진 감지 영상", "color": "#90A4AE"},
+    {"key": "mid_low", "range": "진도 Ⅲ~Ⅳ", "title": "약한 흔들림",
+     "desc": "건물 위층에 있는 사람들이 흔들림을 느끼고, 그릇·창문이 소리를 내는 수준입니다.",
+     "video": "oNTGC34kZtU", "src": "2016년 경주 지진 당시 도로 CCTV", "color": "#FBC02D"},
+    {"key": "mid", "range": "진도 Ⅴ~Ⅵ", "title": "뚜렷한 흔들림",
+     "desc": "거의 모든 사람이 느끼고 놀라서 밖으로 뛰어나가며, 가구가 넘어지기도 합니다.",
+     "video": "qo8CEQRwVCA", "src": "2017년 포항 지진 뉴스특보", "color": "#FB8C00"},
+    {"key": "high", "range": "진도 Ⅶ~Ⅷ", "title": "구조물 피해 시작",
+     "desc": "부실 건축물에 균열과 부분 붕괴가 발생하고, 굴뚝·기둥이 무너지는 수준입니다.",
+     "video": "bYDcOPboOYA", "src": "일본 구마모토 규모 7.1 강진 현장", "color": "#E53935"},
+    {"key": "extreme", "range": "진도 Ⅸ 이상", "title": "심각한 붕괴",
+     "desc": "대부분의 건축물이 기초와 함께 무너지고, 지표면이 심하게 갈라지는 수준입니다.",
+     "video": "qgANwS2pm58", "src": "튀르키예 규모 7.8 강진 건물 붕괴", "color": "#8B0035"},
+]
 
-session = requests.Session()
-
-# ────────────────────────────────
-# 데이터 불러오기 (5분 캐시)
-# ────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
-def fetch_all_missing(max_rows=500):
-    all_list = []
-    page = 1
-    row_size = 100
-    total_count = 0
-    while True:
-        payload = {
-            "esntlId": ESNTL_ID,
-            "authKey": AUTH_KEY,
-            "rowSize": str(row_size),
-            "page": str(page),
-        }
-        try:
-            resp = session.post(FIND_CHILD_URL, data=payload, timeout=10)
-            data = resp.json()
-        except Exception:
-            break
-
-        if data.get("result") != "00":
-            break
-
-        total_count = data.get("totalCount", 0)
-        rows = data.get("list", [])
-        all_list.extend(rows)
-
-        if len(rows) < row_size or len(all_list) >= max_rows or len(all_list) >= total_count:
-            break
-        page += 1
-
-    df = pd.DataFrame(all_list)
-    return df, total_count
-
-def parse_date(v):
-    try:
-        return datetime.strptime(str(v), "%Y%m%d").strftime("%Y.%m.%d")
-    except Exception:
-        return "-"
-
-# ────────────────────────────────
-# CSS (헤더 + 실시간 스크롤 배너 + 카드)
-# ────────────────────────────────
+# ── CSS ──
 st.markdown("""
 <style>
-.stApp { background-color: #F3F5F8; }
-.block-container { padding-top: 1.2rem; max-width: 1100px; margin: 0 auto; }
-
-.hero-box {
-    background: linear-gradient(135deg, #0B2545, #1B3B6F);
-    border-radius: 20px;
-    padding: 30px 28px;
-    text-align: center;
-    margin-bottom: 14px;
-}
-.hero-title { color: white !important; font-size: 26px; font-weight: 900; }
-.hero-sub { color: #BFD0EA !important; font-size: 14px; margin-top: 6px; }
-
-/* 실시간 스크롤 배너 */
-.ticker-wrap {
-    background: #C62828;
-    border-radius: 12px;
-    overflow: hidden;
-    white-space: nowrap;
-    padding: 10px 0;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 10px rgba(198,40,40,0.35);
-}
-.ticker-move {
-    display: inline-block;
-    padding-left: 100%;
-    animation: ticker-scroll 22s linear infinite;
-    color: white;
-    font-size: 14.5px;
-    font-weight: 700;
-}
-.ticker-move span { margin-right: 48px; }
-@keyframes ticker-scroll {
-    0%   { transform: translateX(0); }
-    100% { transform: translateX(-100%); }
-}
-
-.stat-row { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
-.stat-card { flex: 1; min-width: 120px; background: white; border-radius: 14px; padding: 14px; text-align: center; box-shadow: 0 2px 8px rgba(15,30,60,0.06); }
-.stat-num { font-size: 22px; font-weight: 900; color: #0B2545; }
-.stat-label { font-size: 12px; color: #5A6B85; font-weight: 700; margin-top: 2px; }
-
-.person-card { background: white; border-radius: 14px; padding: 14px; box-shadow: 0 2px 8px rgba(15,30,60,0.06); margin-bottom: 14px; }
-.person-badge { display:inline-block; font-size:11px; font-weight:800; color:white; padding:3px 9px; border-radius:999px; margin-bottom:6px; }
-.person-name { font-size:16px; font-weight:900; color:#111; }
-.person-info { font-size:13px; color:#444; margin-top:4px; line-height:1.5; }
-
-.footer-note { text-align:center; font-size:12px; color:#8894A6; margin-top:26px; }
-
-/* 하단 3개년 통계 섹션 */
-.summary-title { font-size:20px; font-weight:900; color:#0B2545; margin: 30px 0 14px 0; }
-.summary-card { background:white; border-radius:16px; padding:20px; box-shadow:0 2px 10px rgba(15,30,60,0.07); margin-bottom:16px; }
-.summary-card-title { font-size:14px; font-weight:800; color:#5A6B85; margin-bottom:8px; }
-.summary-big { font-size:26px; font-weight:900; color:#0B2545; }
-.summary-sub { font-size:12.5px; color:#8894A6; margin-top:4px; }
-.badge-found { background:#E8F5E9; color:#2E7D32 !important; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:800; }
-.badge-missing { background:#FFEBEE; color:#C62828 !important; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:800; }
-.source-note { font-size:11px; color:#B0B8C4; margin-top:10px; }
+html, body, [class*="css"]  { font-size: 17px; }
+.hero-box { background: linear-gradient(135deg,#1A237E,#C62828); padding: 28px 30px;
+  border-radius: 16px; color: white; margin-bottom: 18px; }
+.hero-title { font-size: 32px; font-weight: 800; margin-bottom: 6px; }
+.hero-sub { font-size: 16px; opacity: 0.9; }
+.ticker-wrap { width: 100%; overflow: hidden; background: #B71C1C; padding: 12px 0;
+  border-radius: 8px; margin-bottom: 20px; }
+.ticker-move { display: inline-block; white-space: nowrap; padding-left: 100%;
+  animation: ticker-scroll 22s linear infinite; color: #fff; font-weight: 700; font-size: 17px; }
+@keyframes ticker-scroll { 0% { transform: translate3d(0,0,0); } 100% { transform: translate3d(-100%,0,0); } }
+.section-title { font-size: 24px; font-weight: 800; margin: 26px 0 14px 0; color: #1A237E;
+  border-left: 6px solid #C62828; padding-left: 12px; }
+.level-card { background: #fff; border-radius: 12px; padding: 16px 10px 14px 10px;
+  text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); min-height: 130px;
+  overflow: visible; margin-bottom: 8px; }
+.level-range { font-size: 22px; font-weight: 900; color: #212121; }
+.level-title { font-size: 15px; font-weight: 600; color: #555; margin-top: 6px; line-height: 1.4; }
+.summary-card { background: #fff; border-radius: 14px; padding: 20px 22px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 14px; min-height: 120px; overflow: visible; }
+.summary-card-title { font-size: 15px; color: #757575; font-weight: 600; margin-bottom: 8px; }
+.summary-big { font-size: 30px; font-weight: 900; color: #1A237E; line-height: 1.3; }
+.summary-sub { font-size: 14px; color: #616161; margin-top: 6px; line-height: 1.5; }
+.legend-row { display: flex; gap: 22px; flex-wrap: wrap; margin: 10px 0 18px 0; font-size: 15px; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.legend-box { width: 18px; height: 18px; border-radius: 4px; display: inline-block; }
+.behavior-card { background: #F3F6FF; border-radius: 12px; padding: 16px 18px;
+  margin-bottom: 10px; min-height: 90px; overflow: visible; }
+.behavior-title { font-size: 16px; font-weight: 800; color: #1A237E; margin-bottom: 6px; }
+.behavior-text { font-size: 14.5px; color: #333; line-height: 1.6; }
+.source-note { font-size: 13px; color: #9E9E9E; margin-top: 20px; line-height: 1.6; }
 </style>
 """, unsafe_allow_html=True)
 
-# ────────────────────────────────
-# 헤더
-# ────────────────────────────────
-st.markdown(
-    '<div class="hero-box">'
-    '<div class="hero-title">🔍 실종아동·취약계층 실종정보 알리미</div>'
-    '<div class="hero-sub">아동, 지적·자폐성 장애인, 치매질환자 등 실종정보를 실시간으로 안내합니다</div>'
-    '</div>', unsafe_allow_html=True
-)
+# ── 데이터 수집 함수 ──
+@st.cache_data(ttl=180)
+def fetch_recent_eq():
+    today = datetime.now()
+    params = {
+        "ServiceKey": KMA_KEY, "pageNo": 1, "numOfRows": 100, "dataType": "JSON",
+        "fromTmFc": (today - timedelta(days=2)).strftime("%Y%m%d"),
+        "toTmFc": today.strftime("%Y%m%d"),
+    }
+    try:
+        res = requests.get(KMA_URL, params=params, timeout=10)
+        items = res.json().get("response", {}).get("body", {}).get("items", {}).get("item", [])
+        if isinstance(items, dict):
+            items = [items]
+        return pd.DataFrame(items)
+    except Exception:
+        return pd.DataFrame()
 
-df, total_count = fetch_all_missing()
+@st.cache_data(ttl=21600)
+def fetch_history_eq():
+    all_items, page, row_size = [], 1, 500
+    while True:
+        params = {"serviceKey": SAFEMAP_KEY, "pageNo": page, "numOfRows": row_size, "returnType": "JSON"}
+        try:
+            res = requests.get(SAFEMAP_URL, params=params, timeout=15)
+            data = res.json()
+        except Exception:
+            break
+        items = data.get("body", {}).get("items", {}).get("item", [])
+        if isinstance(items, dict):
+            items = [items]
+        if not items:
+            break
+        all_items.extend(items)
+        total = data.get("body", {}).get("totalCount", 0)
+        if len(all_items) >= total:
+            break
+        page += 1
+        if page > 20:
+            break
+    return pd.DataFrame(all_items)
 
-if df.empty:
-    st.error("데이터를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
-    st.stop()
+def extract_province(lc):
+    if not isinstance(lc, str):
+        return "기타(해외 등)"
+    for key in PROVINCE_CENTER:
+        if lc.startswith(key):
+            return key
+    return "기타(해외 등)"
 
-df["target_label"] = df["writngTrgetDscd"].map(TARGET_LABELS).fillna("기타")
-df["date_fmt"] = df["occrde"].apply(parse_date)
+def bin_color_label(cnt):
+    if cnt <= 10:
+        return [255, 214, 224, 190], "0~10건"
+    elif cnt <= 50:
+        return [255, 133, 161, 210], "11~50건"
+    elif cnt <= 100:
+        return [230, 57, 90, 230], "51~100건"
+    else:
+        return [139, 0, 53, 255], "100건 초과"
 
-# ────────────────────────────────
-# 실시간 스크롤 배너 (최근 등록 20건)
-# ────────────────────────────────
-recent_df = df.sort_values("occrde", ascending=False).head(20)
-ticker_items = ""
-for _, row in recent_df.iterrows():
-    ticker_items += (
-        f"<span>🚨 [{row['target_label']}] {row.get('nm','정보없음')} · "
-        f"{row.get('sexdstnDscd','-')} · {row.get('age','-')}세 · "
-        f"{row['date_fmt']} 발생 · {row.get('occrAdres','-')}</span>"
-    )
+def mag_color(m):
+    if pd.isna(m):
+        return [158, 158, 158, 160]
+    if m < 3:
+        return [158, 158, 158, 180]
+    elif m < 4:
+        return [255, 193, 7, 210]
+    elif m < 5:
+        return [255, 111, 0, 230]
+    return [211, 47, 47, 255]
 
-st.markdown(
-    f'<div class="ticker-wrap"><div class="ticker-move">{ticker_items}</div></div>',
-    unsafe_allow_html=True
-)
+recent_df = fetch_recent_eq()
+history_df = fetch_history_eq()
 
-# ────────────────────────────────
-# 상단 통계 배지
-# ────────────────────────────────
-cat_counts = df["target_label"].value_counts()
-stat_html = f'<div class="stat-row"><div class="stat-card"><div class="stat-num">{total_count:,}</div><div class="stat-label">전체 등록</div></div>'
-for label, cnt in cat_counts.items():
-    stat_html += f'<div class="stat-card"><div class="stat-num">{cnt}</div><div class="stat-label">{label}</div></div>'
-stat_html += "</div>"
-st.markdown(stat_html, unsafe_allow_html=True)
+if not history_df.empty:
+    history_df["mag"] = pd.to_numeric(history_df["smints"], errors="coerce")
+    history_df["year"] = history_df["occu_de"].astype(str).str[:4]
+    history_df["province"] = history_df["lc"].apply(extract_province)
 
-tab_list, tab_stat = st.tabs(["📋 실시간 목록", "📊 통계"])
+if not recent_df.empty:
+    recent_df["mag_val"] = pd.to_numeric(recent_df["mt"], errors="coerce")
+    recent_df["color"] = recent_df["mag_val"].apply(mag_color)
+    recent_df["radius"] = recent_df["mag_val"].fillna(2) * 3000 + 3000
 
-# ────────────────────────────────
-# 탭 1: 목록
-# ────────────────────────────────
-with tab_list:
-    col1, col2, col3 = st.columns([2, 2, 2])
-    with col1:
-        sel_target = st.multiselect("대상구분", options=sorted(df["target_label"].unique()), default=[])
-    with col2:
-        sel_gender = st.multiselect("성별", options=sorted(df["sexdstnDscd"].dropna().unique()), default=[])
-    with col3:
-        keyword = st.text_input("이름/지역 검색", "")
+# ── 헤더 ──
+st.markdown('<div class="hero-box"><div class="hero-title">🌍 대한민국 지진 현황 알리미</div>'
+            '<div class="hero-sub">기상청·행정안전부 공식 데이터를 기반으로 실시간 지진 속보와 최근 10년 발생 이력을 보여드립니다.</div></div>',
+            unsafe_allow_html=True)
 
-    filtered = df.copy()
-    if sel_target:
-        filtered = filtered[filtered["target_label"].isin(sel_target)]
-    if sel_gender:
-        filtered = filtered[filtered["sexdstnDscd"].isin(sel_gender)]
-    if keyword:
-        filtered = filtered[
-            filtered["nm"].astype(str).str.contains(keyword, na=False) |
-            filtered["occrAdres"].astype(str).str.contains(keyword, na=False)
-        ]
+# ── 상단 실시간 스크롤 배너 ──
+if recent_df.empty:
+    ticker_items = ["🔴 최근 3일간 국내 지진 속보가 없습니다."]
+else:
+    ticker_items = []
+    for _, row in recent_df.iterrows():
+        t = str(row.get("tmEqk", ""))
+        tf = f"{t[0:4]}.{t[4:6]}.{t[6:8]} {t[8:10]}:{t[10:12]}" if len(t) >= 12 else t
+        ticker_items.append(f"🔴 {tf} · 규모 {row.get('mt','-')} · {row.get('loc','-')}")
+content = "&nbsp;&nbsp;|&nbsp;&nbsp;".join(ticker_items * 3)
+st.markdown(f'<div class="ticker-wrap"><div class="ticker-move">{content}</div></div>', unsafe_allow_html=True)
 
-    st.write(f"검색 결과: **{len(filtered)}건**")
+# ── 실시간 지진 지도 (최근 3일) ──
+st.markdown('<div class="section-title">🗺️ 실시간 지진 발생 지도 (최근 3일)</div>', unsafe_allow_html=True)
+if not recent_df.empty and "lat" in recent_df.columns:
+    layer = pdk.Layer("ScatterplotLayer", data=recent_df, get_position='[lon, lat]',
+                       get_fill_color='color', get_radius='radius', pickable=True)
+    view_state = pdk.ViewState(latitude=36.5, longitude=127.8, zoom=6.2, pitch=0)
+    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state,
+        tooltip={"html": "<b>{loc}</b><br/>규모 {mt}<br/>진도 {inT}"}))
+else:
+    st.info("최근 3일간 표시할 지진 데이터가 없습니다.")
 
-    PAGE_SIZE = 12
-    if "page_no" not in st.session_state:
-        st.session_state.page_no = 1
+# ── 규모·진도 설명 + 클릭 영상 ──
+st.markdown('<div class="section-title">📊 지진 규모와 진도, 클릭해서 실제 피해 영상을 확인하세요</div>', unsafe_allow_html=True)
+if "selected_level" not in st.session_state:
+    st.session_state.selected_level = None
 
-    total_pages = max(1, (len(filtered) - 1) // PAGE_SIZE + 1)
-    st.session_state.page_no = min(st.session_state.page_no, total_pages)
+cols = st.columns(5)
+for i, lv in enumerate(INTENSITY_LEVELS):
+    with cols[i]:
+        st.markdown(f'<div class="level-card" style="border-top:8px solid {lv["color"]};">'
+                    f'<div class="level-range">{lv["range"]}</div>'
+                    f'<div class="level-title">{lv["title"]}</div></div>', unsafe_allow_html=True)
+        if st.button("▶ 영상보기", key=f"btn_{lv['key']}", use_container_width=True):
+            st.session_state.selected_level = lv["key"]
 
-    start = (st.session_state.page_no - 1) * PAGE_SIZE
-    page_df = filtered.iloc[start:start + PAGE_SIZE]
+selected = next((l for l in INTENSITY_LEVELS if l["key"] == st.session_state.selected_level), None)
+if selected:
+    st.markdown(f"### 🎬 {selected['range']} — {selected['title']}")
+    st.write(selected["desc"])
+    st.video(f"https://www.youtube.com/watch?v={selected['video']}")
+    st.caption(f"출처: {selected['src']}")
 
-    cols = st.columns(3)
-    for i, (_, row) in enumerate(page_df.iterrows()):
-        with cols[i % 3]:
-            badge_color = TARGET_COLOR.get(row["writngTrgetDscd"], "#455A64")
-            st.markdown(
-                f'<div class="person-card">'
-                f'<span class="person-badge" style="background:{badge_color}">{row["target_label"]}</span>'
-                f'<div class="person-name">{row.get("nm", "정보없음")}</div>'
-                f'<div class="person-info">'
-                f'{row.get("sexdstnDscd","-")} · 당시 {row.get("age","-")}세 (현재 {row.get("ageNow","-")}세)<br>'
-                f'발생일: {row["date_fmt"]}<br>'
-                f'발생장소: {row.get("occrAdres","-")}<br>'
-                f'특징: {row.get("etcSpfeatr") or "정보없음"}'
-                f'</div></div>',
-                unsafe_allow_html=True
-            )
-            photo_b64 = row.get("tknphotoFile")
-            if isinstance(photo_b64, str) and len(photo_b64) > 100:
-                try:
-                    img_bytes = base64.b64decode(photo_b64)
-                    st.image(img_bytes, width=150)
-                except Exception:
-                    st.write("📷 사진 로드 실패")
+# ── 예방 행동요령 ──
+st.markdown('<div class="section-title">🛡️ 지진 발생 시 국민행동요령</div>', unsafe_allow_html=True)
+b1, b2, b3, b4 = st.columns(4)
+with b1:
+    st.markdown('<div class="behavior-card"><div class="behavior-title">1. 평소 대비</div>'
+                '<div class="behavior-text">가구나 물건이 넘어지지 않도록 고정하고, 가족과 대피 장소·통로를 미리 정해둡니다.</div></div>', unsafe_allow_html=True)
+with b2:
+    st.markdown('<div class="behavior-card"><div class="behavior-title">2. 흔들리는 동안</div>'
+                '<div class="behavior-text">탁자 아래로 들어가 몸을 보호하고 탁자 다리를 꼭 잡습니다.</div></div>', unsafe_allow_html=True)
+with b3:
+    st.markdown('<div class="behavior-card"><div class="behavior-title">3. 흔들림이 멈추면</div>'
+                '<div class="behavior-text">전기·가스를 차단하고 신발을 신은 채 계단으로 신속히 대피합니다.</div></div>', unsafe_allow_html=True)
+with b4:
+    st.markdown('<div class="behavior-card"><div class="behavior-title">4. 장소별 대응</div>'
+                '<div class="behavior-text">엘리베이터 안에서는 모든 층 버튼을 눌러 가장 먼저 열리는 층에서 내립니다.</div></div>', unsafe_allow_html=True)
 
-    nav1, nav2, nav3 = st.columns([1, 2, 1])
-    with nav1:
-        if st.button("◀ 이전", disabled=st.session_state.page_no <= 1):
-            st.session_state.page_no -= 1
-            st.rerun()
-    with nav2:
-        st.markdown(f"<div style='text-align:center'>{st.session_state.page_no} / {total_pages} 페이지</div>", unsafe_allow_html=True)
-    with nav3:
-        if st.button("다음 ▶", disabled=st.session_state.page_no >= total_pages):
-            st.session_state.page_no += 1
-            st.rerun()
+# ── 10년 통계 ──
+st.markdown('<div class="section-title">📈 최근 지진 발생 이력 통계 (전체 등록 데이터 기준)</div>', unsafe_allow_html=True)
+if not history_df.empty:
+    total_count = len(history_df)
+    strongest = history_df.loc[history_df["mag"].idxmax()]
+    valid_prov = history_df[history_df["province"] != "기타(해외 등)"]
+    top_province = valid_prov["province"].value_counts().idxmax() if not valid_prov.empty else "-"
+    top_province_cnt = valid_prov["province"].value_counts().max() if not valid_prov.empty else 0
 
-# ────────────────────────────────
-# 탭 2: 통계 (API 실시간 데이터)
-# ────────────────────────────────
-with tab_stat:
-    bar_fig = go.Figure(go.Bar(
-        x=cat_counts.index.tolist(),
-        y=cat_counts.values.tolist(),
-        marker_color="#1B3B6F",
-        text=cat_counts.values.tolist(),
-        textposition="outside"
-    ))
-    bar_fig.update_layout(title="대상구분별 등록 건수 (실시간)", height=350, margin=dict(t=50, b=30))
-    st.plotly_chart(bar_fig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f'<div class="summary-card"><div class="summary-card-title">등록된 전체 지진 이력</div>'
+                     f'<div class="summary-big">{total_count:,}건</div>'
+                     f'<div class="summary-sub">규모 2.0 이상, 기상청 관측 기준</div></div>', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'<div class="summary-card"><div class="summary-card-title">역대 최대 규모</div>'
+                     f'<div class="summary-big">규모 {strongest["mag"]:.1f}</div>'
+                     f'<div class="summary-sub">{strongest["lc"]} · {strongest["occu_de"]}</div></div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'<div class="summary-card"><div class="summary-card-title">발생 최다 지역</div>'
+                     f'<div class="summary-big">{top_province} {top_province_cnt:,}건</div>'
+                     f'<div class="summary-sub">전체의 {round(top_province_cnt/total_count*100,1)}%</div></div>', unsafe_allow_html=True)
 
-    gender_counts = df["sexdstnDscd"].value_counts()
-    pie_fig = go.Figure(go.Pie(
-        labels=gender_counts.index.tolist(),
-        values=gender_counts.values.tolist(),
-        marker=dict(colors=["#1565C0", "#C62828"])
-    ))
-    pie_fig.update_layout(title="성별 비율 (실시간)", height=350, margin=dict(t=50, b=30))
-    st.plotly_chart(pie_fig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
+    yearly_counts = history_df["year"].value_counts().sort_index()
+    fig_year = go.Figure(go.Bar(x=yearly_counts.index.tolist(), y=yearly_counts.values.tolist(),
+        marker_color="#C62828", text=[f"{v:,}건" for v in yearly_counts.values], textposition="outside"))
+    fig_year.update_layout(title="연도별 지진 발생 건수", height=380, margin=dict(t=50, b=30),
+        yaxis_title="발생 건수", xaxis_title="연도")
+    st.plotly_chart(fig_year, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
 
-# ────────────────────────────────
-# 최근 3년 실종 통계 종합 (경찰청·e-나라지표 공식 통계)
-# ────────────────────────────────
-st.markdown('<div class="summary-title">📈 최근 3년(2023~2025) 실종 통계 종합</div>', unsafe_allow_html=True)
+    mag_labels = ["2.0~2.9", "3.0~3.9", "4.0~4.9", "5.0~5.9", "6.0 이상"]
+    history_df["mag_group"] = pd.cut(history_df["mag"], bins=[2,3,4,5,6,10], labels=mag_labels, right=False)
+    mag_counts = history_df["mag_group"].value_counts().reindex(mag_labels).fillna(0)
+    fig_mag = go.Figure(go.Bar(x=mag_labels, y=mag_counts.values.tolist(),
+        marker_color="#EF6C00", text=[f"{int(v):,}건" for v in mag_counts.values], textposition="outside"))
+    fig_mag.update_layout(title="규모별 발생 건수 분포", height=350, margin=dict(t=50, b=30),
+        yaxis_title="발생 건수", xaxis_title="규모 구간")
+    st.plotly_chart(fig_mag, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
+else:
+    st.info("이력 데이터를 불러오지 못했습니다.")
 
-years = ["2023", "2024", "2025"]
-child_elderly_reports = [48745, 49624, 54569]   # 실종아동등(아동+장애인+치매환자) 신고접수
-adult_reports = [74847, 71854, None]            # 성인(가출인) 신고접수 - 2025년 확정치 미공개
+# ── 지역별 빈도 지도 ──
+st.markdown('<div class="section-title">🎯 지역별 지진 발생 빈도 지도</div>', unsafe_allow_html=True)
+st.markdown('<div class="legend-row">'
+            '<span class="legend-item"><span class="legend-box" style="background:#FFD6E0;"></span>0~10건</span>'
+            '<span class="legend-item"><span class="legend-box" style="background:#FF85A1;"></span>11~50건</span>'
+            '<span class="legend-item"><span class="legend-box" style="background:#E6395A;"></span>51~100건</span>'
+            '<span class="legend-item"><span class="legend-box" style="background:#8B0035;"></span>100건 초과</span>'
+            '</div>', unsafe_allow_html=True)
 
-trend_fig = go.Figure()
-trend_fig.add_trace(go.Bar(
-    x=years, y=child_elderly_reports, name="실종아동등(아동·장애인·치매환자)",
-    marker_color="#1565C0", text=child_elderly_reports, textposition="outside"
-))
-trend_fig.add_trace(go.Bar(
-    x=years, y=adult_reports, name="성인 실종신고(가출인)",
-    marker_color="#EF6C00", text=[f"{v:,}" if v else "집계중" for v in adult_reports], textposition="outside"
-))
-trend_fig.update_layout(
-    barmode="group", height=360, margin=dict(t=30, b=30),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
-)
-st.plotly_chart(trend_fig, use_container_width=True, config={"staticPlot": True, "displayModeBar": False})
+if not history_df.empty:
+    counts = valid_prov["province"].value_counts().to_dict()
+    rows = []
+    for prov, (lat, lon) in PROVINCE_CENTER.items():
+        cnt = counts.get(prov, 0)
+        color, label = bin_color_label(cnt)
+        rows.append({"province": prov, "lat": lat, "lon": lon, "count": cnt,
+                      "color": color, "radius": 9000 + cnt * 450, "bin_label": label})
+    region_df = pd.DataFrame(rows)
+    region_layer = pdk.Layer("ScatterplotLayer", data=region_df, get_position='[lon, lat]',
+                              get_fill_color='color', get_radius='radius', pickable=True)
+    region_view = pdk.ViewState(latitude=36.3, longitude=127.8, zoom=6.1, pitch=0)
+    st.pydeck_chart(pdk.Deck(layers=[region_layer], initial_view_state=region_view,
+        tooltip={"html": "<b>{province}</b><br/>발생 {count}건 ({bin_label})"}))
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.markdown(
-        '<div class="summary-card">'
-        '<div class="summary-card-title">2024년 실종아동등 발견 현황</div>'
-        '<div class="summary-big">48,751건 <span class="badge-found">발견</span></div>'
-        '<div class="summary-sub">전체 접수 49,624건 중 발견율 99.75%</div>'
-        '</div>', unsafe_allow_html=True
-    )
-with c2:
-    st.markdown(
-        '<div class="summary-card">'
-        '<div class="summary-card-title">2024년 영구(장기) 미발견</div>'
-        '<div class="summary-big">121건 <span class="badge-missing">미발견</span></div>'
-        '<div class="summary-sub">아동 64명 · 장애인 41명 · 치매환자 16명 (미발견율 0.25%)</div>'
-        '</div>', unsafe_allow_html=True
-    )
-with c3:
-    st.markdown(
-        '<div class="summary-card">'
-        '<div class="summary-card-title">실종 재신고(오신고 유사) 현황</div>'
-        '<div class="summary-big">약 15만건</div>'
-        '<div class="summary-sub">최근 5년간 해제 후 재신고, 이 중 약 30%가 성인 사례</div>'
-        '</div>', unsafe_allow_html=True
-    )
-
-st.markdown(
-    '<div class="source-note">※ 위 3개년 통계는 경찰청 실종아동등 프로파일링 시스템 및 e-나라지표(index.go.kr) 공식 발표 자료를 기준으로 작성되었습니다. '
-    '2025년 성인(가출인) 신고 확정치는 아직 공식 발표되지 않아 "집계중"으로 표시되며, "오신고" 단독 통계는 공개되지 않아 가장 근접한 "재신고" 통계로 대체 표기했습니다.</div>',
-    unsafe_allow_html=True
-)
-
-# ────────────────────────────────
-# 푸터
-# ────────────────────────────────
-st.markdown(
-    f'<div class="footer-note">자료 출처: 경찰청 · 안전Dream(safe182.go.kr) · e-나라지표<br>'
-    f'{datetime.now().strftime("%Y.%m.%d %H:%M")} 기준 · 5분마다 자동 갱신</div>',
-    unsafe_allow_html=True
-)
+st.markdown('<div class="source-note">※ 실시간 배너·지도는 기상청 지진정보 조회서비스(최근 3일), '
+            '10년 통계·지역 지도는 행정안전부 생활안전지도 지진발생이력 데이터를 기반으로 합니다. '
+            '두 데이터의 원 출처는 모두 기상청 관측 자료입니다.</div>', unsafe_allow_html=True)
+st.caption(f"마지막 갱신: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
